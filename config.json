@@ -1,0 +1,16 @@
+{
+  "regions": [
+    "US",
+    "GB",
+    "JP",
+    "KR",
+    "TW",
+    "AU"
+  ],
+  "pages_per_region": 1,
+  "page_size": 50,
+  "top_n": 50,
+  "include_keywords": [],
+  "exclude_keywords": [],
+  "history_days": 25
+}
