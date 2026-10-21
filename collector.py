@@ -87,7 +87,7 @@ def cleanup(root, now, days):
     for folder in ['history', 'reports']:
         for f in (root / folder).glob('*'):
             try:
-                day = datetime.strptime(f.stem, '%Y-%m-%d').date()
+                day = datetime.strptime(f.stem[:10], '%Y-%m-%d').date()
             except ValueError:
                 continue
             if day < cutoff or day > now.date():
@@ -122,7 +122,7 @@ def write(root, rows, now, regions, demo=False):
     (root / 'reports' / (day + '.md')).write_text('\n'.join(lines) + '\n', encoding='utf-8')
 
 
-def main():
+def legacy_main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', default='config.json')
     parser.add_argument('--output', default='data')
@@ -142,6 +142,11 @@ def main():
         rows = collect(c, key)
     write(root, rows, now, c['regions'], args.demo)
     print(f"{'DEMO' if args.demo else 'OK'}: {len(rows)} candidates; output={root}")
+
+
+def main():
+    from tracker import main as v3_main
+    v3_main()
 
 
 if __name__ == '__main__':

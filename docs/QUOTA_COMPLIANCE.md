@@ -1,23 +1,36 @@
-# 配额与合规说明
+# V3 配额、数据与合规
 
-核对日期：2026-10-21。实施前和长期运行中应重新检查官方规则。
+核对日期：2026-10-21。正式使用前必须再次核对 Cloud Console 和政策，代码不能替运营方取得用途许可。
+
+## 用途许可
+
+YouTube Developer Policies III.E.4.h 对派生指标有限制。III.L 和 Additional policies for derived metrics and data storage 为适用的、经审核的 Analytics & Reporting 用途提供补充条款；官方示例包括按播放增长排名。本项目快照差值/榜单应由运营方确认用途已获得相应许可并接受补充条款，之后才设置 `YOUTUBE_ANALYTICS_APPROVAL_CONFIRMED=true`。变量默认缺失时 CLI 在任何 API 请求前拒绝真实采集。不声称“非官方”声明本身能豁免政策。离线合成数据测试无需许可。
+
+- https://developers.google.com/youtube/terms/developer-policies
+- https://developers.google.com/youtube/terms/derived-metrics-policy
 
 ## 配额
 
-本项目只调用 videos.list，每个请求 1 单位。默认 6 地区 × 最多 1 页，正常每日最多 6 单位；瞬时失败重试最多 3 次，默认最坏请求预算 18 单位。手动重跑、失败请求、同一 Cloud 项目其他程序也会消耗配额；每页均单独计费，以 Cloud Console 实际配额和用量为准。页数上限为5，可据地区数量预估 `地区数 × 页数 × 3` 的重试上限。
+现行官方 search.list 文档为独立 Search Queries 桶，默认每日100调用、每次1单位；其他方法使用另一配额桶。不要沿用旧版“每次搜索100单位”的预算模型，也不要假定自己的 Cloud 项目已分配相同限额。
 
-- [videos.list 官方参考](https://developers.google.com/youtube/data/reference/rest/v3/videos/list)
-- [配额成本与重置规则](https://developers.google.com/youtube/data/determine_quota_cost)
+默认每轮6次 videos chart、6次 videoCategories、12次 search、至多60次 videos详情，共84次API调用；每6小时运行一次约48次 search、288次其他调用/日。轮内总上限100、搜索上限12，无自动重试。每轮只取一页，以降低配额；无法保证覆盖所有视频。
 
-## 数据生命周期
+额外在本地历史中**请求发出前**原子记录尝试，恢复后沿用最近滚动24小时账本，最多80次 search、总请求400次（含失败尝试）。这个保守限制为手动重跑保留余量，按滚动窗口而非假设服务端重置时区。失败后也持久化账本。账本无法计算其他应用共用密钥的耗用，Cloud Console 是实际配额依据；请专用受限密钥，不拆项目轮换绕过配额。
 
-公开视频元数据仍是 API Data，不是可以任意永久存档的免费素材。普通未授权 API 数据应在30天内删除或刷新，且应及时响应适用的删除要求。本项目选择删除：运行目录最多25天、Actions产物保留2天，不用Git存储数据。下载、备份、日志和其他下游副本也由运营者负责；本地停止运行时应手动删除。源视频后续被删除或转私密时，旧快照不会实时同步删除；如收到删除要求，应立即清除相关历史、报告、artifact及副本，可直接清空全部数据重新开始。
+- https://developers.google.com/youtube/data/reference/rest/v3/search/list
+- https://developers.google.com/youtube/data/reference/rest/v3/videos/list
+- https://developers.google.com/youtube/data/getting-started
 
-不下载媒体，不转存封面，不获取非公开视频，不规避地域限制，不抓取网页，不采集个人账户授权数据。结果保留YouTube原始指标与来源链接，排序仅用于人工编辑候选，不声称为独立热度、全球代表性或官方榜单。不得把项目用于提供未经许可的API数据再分发服务；面向公众上线前，应按实际产品复核最低功能、归因和隐私政策要求。仅元数据不授予视频、图片、音频的再利用权；公众号转载或改编需另外取得许可。
+## 安全与留存
 
-- [YouTube API 开发者政策](https://developers.google.com/youtube/terms/developer-policies)
-- [合规指南](https://developers.google.com/youtube/terms/developer-policies-guide)
-- [YouTube 服务条款](https://www.youtube.com/t/terms)
-- [Google 隐私政策](https://policies.google.com/privacy)
+密钥仅来自环境/Actions Secret，置于请求头而非URL；不输出请求、响应错误正文或认证数据。PR CI不注入 Secret；正式workflow仅main、checkout不保留Git凭据，只有持久化任务具contents:write。
 
-Key 仅放 GitHub Actions Secret `YOUTUBE_API_KEY` 或本地环境变量，不提交仓库、不写配置。若泄露应立即撤销/轮换。工作流只赋予仓库及 Actions 读取权限，不在 pull_request 工作流中使用 Key。GitHub运行日志不包含元数据正文；不把候选表写入永久 Job Summary。运行者仍须复核最新条款及其具体使用方式，本项目不代表已获官方审核。
+只采公开视频元数据，不下载视频、不抓取页面、不绕过访问限制、不获取个人观看历史。每轮刷新候选公开状态；不可用视频会从本地快照中删除并移除旧报告。历史及报告7天滚动清理；发现来源时间最多25天；旧Release资产在新包上传核对成功后删除，避免把原始数据永久写入Git。Artifact副本2天且只在成功持久化后上传。公开仓库的Release与artifact不能视为私有保险箱。
+
+静态快照在停机期间不会自毁；停用或持续故障时运营方必须删除Release资产、旧版V1/V2资产、artifacts及下载副本，遵守非授权数据最长30天及删除要求。实现不宣称无人维护时自动保证合规。代码默认7天保存统计，不使用补充条款可能允许的长期存储。其他条款、品牌展示、版权与发布责任仍适用。
+
+## 指标含义
+
+增量由本程序计算，清楚区别于YouTube原始累计值和官方榜单。它是约24小时窗口的公开计数差，不是独立观众、观看时长、地域播放数或实时分析；平台更新延迟与修订仍可能影响结果。视频全部类型可进入候选，但覆盖受地区、类别轮转、前页、30日新候选发现窗、14日退池与池容量限制。
+
+mostPopular覆盖变化依据：https://developers.google.com/youtube/data/revision_history （2025-07-10条目）。公开计数定义可能变更，以官方文档为准；本程序不补偿或改写原始计数。

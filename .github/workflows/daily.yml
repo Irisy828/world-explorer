@@ -1,48 +1,50 @@
-name: Daily World Guide
+name: World Guide V3
 on:
   schedule:
-    - cron: '17 0 * * *'
+    - cron: '17 0,6,12,18 * * *'
   workflow_dispatch:
 permissions:
   contents: read
-  actions: read
 concurrency:
-  group: world-guide-daily
+  group: world-guide-data-v3
   cancel-in-progress: false
 jobs:
   collect:
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - name: Test offline
         run: python -m unittest discover -s tests -v
-      - name: Restore latest unexpired snapshot artifact
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          GH_BRANCH: ${{ github.ref_name }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          run_id=$(gh api --method GET "repos/$GH_REPO/actions/workflows/daily.yml/runs" -f branch="$GH_BRANCH" -f status=success -f per_page=1 --jq '.workflow_runs[0].id // empty')
-          if [ -n "$run_id" ]; then
-            artifact_id=$(gh api "repos/$GH_REPO/actions/runs/$run_id/artifacts" --jq '[.artifacts[] | select(.name == "world-guide-data" and .expired == false)][0].id // empty')
-            if [ -n "$artifact_id" ]; then
-              gh run download "$run_id" --name world-guide-data --dir data
-            fi
-          fi
-      - name: Collect public metadata
+      - name: Restore V3 rolling store (fail closed on restore errors)
+        id: restore
+        run: python persistence.py restore
+      - name: Collect complete pool and rank comparable differences
+        id: collect
         env:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
-        run: python collector.py
-      - name: Store reports and rolling history
+          YOUTUBE_ANALYTICS_APPROVAL_CONFIRMED: ${{ vars.YOUTUBE_ANALYTICS_APPROVAL_CONFIRMED }}
+        run: python tracker.py
+      - name: Save rolling store and quota ledger even after collection failure
+        if: always() && steps.restore.outcome == 'success'
+        id: save
+        run: python persistence.py save
+      - name: Downloadable report copy
+        if: steps.collect.outcome == 'success' && steps.save.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: world-guide-data
+          name: world-guide-v3-data
           path: data/
           retention-days: 2
           if-no-files-found: error

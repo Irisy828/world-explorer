@@ -1,0 +1,8 @@
+{
+  "regions": ["US", "GB", "JP", "KR", "TW", "AU"],
+  "categories_per_run": 2,
+  "pool_limit": 3000,
+  "tracking_days": 14,
+  "search_budget": 12,
+  "request_budget": 100
+}

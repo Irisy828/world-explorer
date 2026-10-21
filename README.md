@@ -1,33 +1,50 @@
-# world-explorer
-Youtube trends crawler for World Explorer
+# world-explorer · V3 世界漫游指南
 
+核心榜单：**监测候选池中所有类型视频过去约24小时新增公开播放量 TOP10**。这不是 YouTube 官方全球前十。按有效快照差值降序，不按知识评分、题材、频道或地区调整名次；并列按视频 ID。不足十条就少于十条。
 
-## 世界漫游指南 · YouTube 采集 MVP
+## 启用
 
-Python 3.12+，无第三方依赖。默认采集 US、GB、JP、KR、TW、AU 的 YouTube 热门视频，按视频 ID 合并地区、按累计播放量生成前 50 个候选。关键词和地区可在 `config.json` 修改。
+1. 先阅读 [配额与合规](docs/QUOTA_COMPLIANCE.md)。运营方需确认已取得适用的 YouTube Analytics & Reporting 用途许可并接受相应补充条款，再在仓库 Actions variables 设置 `YOUTUBE_ANALYTICS_APPROVAL_CONFIRMED=true`。该变量只记录运营方确认，不代表软件替 YouTube 批准用途。
+2. 合并此 V3 PR 到 main；不要再合并旧 V2 PR #2（会覆盖榜单口径）。V3 从 main 独立交付，不依赖 #2。
+3. 在仓库 Actions secrets 设置 `YOUTUBE_API_KEY`，Google Cloud 启用 YouTube Data API v3，并限制密钥只能调用该 API。不要把密钥写进代码、聊天、文件或输出。
+4. Actions → World Guide V3 → Run workflow → main。正式任务仅允许 main，PR 测试无密钥、无联网。
+5. 查看 `world-guide-v3-data` artifact 内的 `reports/时间戳.md/.csv/.json`。Markdown 为中文公众号待审核素材，保留视频原题；自动翻译、内容判断、事实查证及发布均不包含在内。
 
-### 启用（合并 PR 后）
+默认北京时间 02:17、08:17、14:17、20:17 运行。GitHub 可能延迟或跳过调度；严格窗口下可能空榜。首次启动先建立基线，通常至少24小时后才可能有有效榜单，不保证凑足十条。
 
-1. 在本仓库 **Settings → Secrets and variables → Actions → New repository secret** 添加 `YOUTUBE_API_KEY`。只在 GitHub 填入值，不写代码、不发到聊天。Google Cloud 需启用 YouTube Data API v3。
-2. 打开 **Actions → Daily World Guide → Run workflow → main → Run workflow**。
-3. 等待运行绿色成功，打开运行页面底部 **Artifacts → world-guide-data** 下载。
-4. 检查 `reports/YYYY-MM-DD.md` 和 CSV 候选榜，以及 `history/YYYY-MM-DD.json`：`demo` 应为 `false`，`regions` 含配置的六个地区，视频 ID 不重复。空榜时检查关键词。
+## 发现与追踪
 
-此后每天北京时间 **08:17** 自动运行（GitHub 调度可能延迟）。运行失败请查看失败步骤：缺 Secret、403、配额或地区支持错误都会明确失败。PR 中的 Offline tests 无需 Secret。
+- 六地区 US/GB/JP/KR/TW/AU：各取一页 mostPopular，再从当地可用类别中每次轮转两类，按最近30天发布视频的累计播放量发现候选。没有关键词、视频时长、语言或知识题材过滤。
+- mostPopular 自2025年7月已偏向音乐、电影、游戏，因此它只是一种入口；类别搜索用于扩大覆盖。每类一页50条，有采样和地区可用性偏差；轮转不是实时覆盖所有类别。
+- 旧视频按 ID 每次批量重查（每批50个），即使离开入口仍追踪；最后一次发现后14天退池。视频发布时间本身不限制旧候选能否上榜。
+- 池上限3000；先保留在追踪期内的成员，再按 ID 接纳新成员。满池未接纳数写入报告，绝不静默按播放量或主观评分截断。需要扩大时同时核对配额、存储和时间窗口。
+- 每批响应结束后记录各视频真实观测时刻。任何请求失败都中止当次榜单，不复用旧数据冒充当前值。
 
-### 本地验证
+## 增量口径
+
+榜单时刻为本轮全部采集结束时刻 T。当前观测必须在 T 前15分钟内；基线须在 T-24小时 的±30分钟内，且前后实际间隔也必须在24小时±30分钟内。选择最接近24小时实际间隔的有效基线；同误差按基线时间稳定选择。绝不线性外推或归一化。
+
+新视频未满24小时、无基线、计数缺失、无效发布时间、时间戳无时区、过期当前快照、窗口内任意已观测计数回退均不参与排名。0为有效计数，零增量可入榜。恢复为正常后需等到干净的可比窗口。报告保留累计值、前后快照、增量、实际间隔、窗口误差、来源、链接及所有不合格原因。
+
+“热度之外”只给人工背景知识选题提示；没有分数，不改变排名，也不声称已看过视频。原题可能非中文，须人工翻译、观看、核验事实和版权后使用。
+
+## 历史持久化
+
+使用独立 Release `world-guide-data-v3` 的单个滚动 ZIP（不提交 Git）；上传并核对成功后才删旧资产。重跑具有独立微秒时间戳，保留每天多次快照。历史和报告按文件日期保留7个自然日，下载副本2天；发现来源时间最多25天，旧候选连续刷新后仍可追踪。V1/V2 的日快照和模拟数据不作为 V3 基线。
+
+恢复失败不当作冷启动。空存储会明确报告冷启动；本地损坏 JSON 会失败而不猜测历史。公开状态重查发现已删除/私有/不可用的视频时清除其本地历史并清除旧报告后生成新报告。Release 存储在本仓库可见性范围内；当前仓库公开，因此不要放任何密钥或私人素材。
+
+连续失败/停用时，Actions 不会自行执行清理；运营方应在不再使用时删除该 Release 的资产及报告 artifacts（包括本地副本），最长不得超过适用政策期限。V1/V2 的旧 Release 和 artifacts 不自动迁移或删除，运营方需单独检查清理。
+
+## 验证与入口
+
+Python 3.12+，标准库，无第三方依赖。
 
 ```sh
 python -m unittest discover -s tests -v
-python collector.py --demo --output work/demo
+python tracker.py
 ```
 
-模拟结果仅验证流程。正式运行从环境变量读取 `YOUTUBE_API_KEY`，执行 `python collector.py`。
+`collector.py` CLI 也转入 V3；其旧采集函数和 `config.json`、`demo_data.py` 仅供原MVP回归测试使用，不参与正式榜单。V3 配置为 `tracker_config.json`。本地同一 data 目录应只有一个进程；Actions 通过 concurrency 串行写入。离线测试使用项目 work 临时目录、模拟 API、模拟时钟，不产生真实热度结论。
 
-### 历史和指标
-
-同一天重跑更新当天快照，跨天独立保存；同一视频可在不同日期重复出现，以便观察趋势。只保留最近 25 天轻量元数据，滚动历史通过 Actions artifact 延续，每份 artifact 保留 2 天。连续两天未成功运行可能失去历史；数据不提交 Git。各地区任一请求失败则不生成当日榜。
-
-这是热门榜候选采集，不是旅游视频搜索；地区表示榜单市场，累计播放量不等于当日增长。旅行相关性需人工审核，也可用关键词筛选。API 行为依据 [YouTube videos.list 官方文档](https://developers.google.com/youtube/data/reference/rest/v3/videos/list)。
-
-完整配置、故障排查、配额与保留策略见 [使用指南](docs/MVP_GUIDE.md) 和 [配额及数据说明](docs/QUOTA_COMPLIANCE.md)。
+更多见 [使用指南](docs/MVP_GUIDE.md) 与 [配额及数据说明](docs/QUOTA_COMPLIANCE.md)。
