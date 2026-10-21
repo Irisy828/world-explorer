@@ -5,41 +5,41 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
-  actions: read
 concurrency:
   group: world-guide-daily
   cancel-in-progress: false
 jobs:
   collect:
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - name: Test offline
         run: python -m unittest discover -s tests -v
-      - name: Restore latest unexpired snapshot artifact
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          GH_BRANCH: ${{ github.ref_name }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          run_id=$(gh api --method GET "repos/$GH_REPO/actions/workflows/daily.yml/runs" -f branch="$GH_BRANCH" -f status=success -f per_page=1 --jq '.workflow_runs[0].id // empty')
-          if [ -n "$run_id" ]; then
-            artifact_id=$(gh api "repos/$GH_REPO/actions/runs/$run_id/artifacts" --jq '[.artifacts[] | select(.name == "world-guide-data" and .expired == false)][0].id // empty')
-            if [ -n "$artifact_id" ]; then
-              gh run download "$run_id" --name world-guide-data --dir data
-            fi
-          fi
-      - name: Collect public metadata
+      - name: Restore durable rolling snapshots
+        id: restore
+        run: python persistence.py restore
+      - name: Collect public metadata and generate review reports
+        id: collect
         env:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
         run: python collector.py
-      - name: Store reports and rolling history
+      - name: Persist and prune even if collection fails
+        if: always() && steps.restore.outcome == 'success'
+        run: python persistence.py save
+      - name: Downloadable review copy (not the history store)
+        if: steps.collect.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: world-guide-data

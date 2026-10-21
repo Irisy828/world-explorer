@@ -22,6 +22,8 @@ def config(path):
     if not isinstance(c.get('regions'), list) or not c['regions'] or any(not isinstance(r, str) or not re.fullmatch('[A-Z]{2}', r) for r in c['regions']):
         raise ValueError('regions must be a nonempty list of ISO two-letter uppercase codes')
     c['regions'] = list(dict.fromkeys(c['regions']))
+    if len(c['regions']) > 12:
+        raise ValueError('at most 12 regions allowed to bound API calls')
     for k, lo, hi in [('pages_per_region', 1, 5), ('page_size', 1, 50), ('top_n', 1, 500), ('history_days', 1, 25)]:
         if type(c.get(k)) is not int or not lo <= c[k] <= hi:
             raise ValueError(f'{k} must be an integer in {lo}..{hi}')
@@ -31,9 +33,9 @@ def config(path):
     return c
 
 
-def request(params, key):
+def request(params, key, endpoint="videos"):
     # Header keeps the key out of URLs and exception messages.
-    req = Request('https://www.googleapis.com/youtube/v3/videos?' + urlencode(params), headers={'X-Goog-Api-Key': key})
+    req = Request('https://www.googleapis.com/youtube/v3/' + endpoint + '?' + urlencode(params), headers={'X-Goog-Api-Key': key})
     for attempt in range(3):
         try:
             with urlopen(req, timeout=30) as response:
@@ -72,7 +74,7 @@ def collect(c, key, fetch=request):
                     continue
                 if vid not in videos:
                     count = v.get('statistics', {}).get('viewCount')
-                    videos[vid] = {'video_id': vid, 'title': s.get('title', ''), 'channel': s.get('channelTitle', ''), 'published_at': s.get('publishedAt', ''), 'view_count': int(count) if count is not None else None, 'regions': [], 'url': 'https://www.youtube.com/watch?v=' + vid}
+                    videos[vid] = {'video_id': vid, 'title': s.get('title', ''), 'channel': s.get('channelTitle', ''), 'published_at': s.get('publishedAt', ''), 'view_count': int(count) if count is not None and str(count).isdigit() else None, 'description': s.get('description', '')[:1000], 'regions': [], 'url': 'https://www.youtube.com/watch?v=' + vid}
                 if region not in videos[vid]['regions']:
                     videos[vid]['regions'].append(region)
             token = page.get('nextPageToken')
@@ -87,7 +89,7 @@ def cleanup(root, now, days):
     for folder in ['history', 'reports']:
         for f in (root / folder).glob('*'):
             try:
-                day = datetime.strptime(f.stem, '%Y-%m-%d').date()
+                day = datetime.strptime(f.stem[:10], '%Y-%m-%d').date()
             except ValueError:
                 continue
             if day < cutoff or day > now.date():
@@ -139,8 +141,13 @@ def main():
         key = os.environ.get('YOUTUBE_API_KEY', '').strip()
         if not key:
             raise ValueError('Missing YOUTUBE_API_KEY environment variable; configure the GitHub Actions secret')
-        rows = collect(c, key)
+        from editorial import discover
+        rows = discover(c, key, now)
+    now = datetime.now(CST)
+    from editorial import enrich, report
+    candidates = enrich(rows, root, now, c, args.demo)
     write(root, rows, now, c['regions'], args.demo)
+    report(root, candidates, now, args.demo)
     print(f"{'DEMO' if args.demo else 'OK'}: {len(rows)} candidates; output={root}")
 
 

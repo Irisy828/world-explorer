@@ -1,33 +1,50 @@
-# world-explorer
-Youtube trends crawler for World Explorer
+# 世界漫游指南 V2
 
+从 YouTube 公开元数据发现知识科普视频，输出每日**目标10条、待人工审核**的中文选题报告。不会下载视频、抓取字幕、调用翻译或语言模型，也不自动发布公众号内容。
 
-## 世界漫游指南 · YouTube 采集 MVP
+## 运行与交付
 
-Python 3.12+，无第三方依赖。默认采集 US、GB、JP、KR、TW、AU 的 YouTube 热门视频，按视频 ID 合并地区、按累计播放量生成前 50 个候选。关键词和地区可在 `config.json` 修改。
-
-### 启用（合并 PR 后）
-
-1. 在本仓库 **Settings → Secrets and variables → Actions → New repository secret** 添加 `YOUTUBE_API_KEY`。只在 GitHub 填入值，不写代码、不发到聊天。Google Cloud 需启用 YouTube Data API v3。
-2. 打开 **Actions → Daily World Guide → Run workflow → main → Run workflow**。
-3. 等待运行绿色成功，打开运行页面底部 **Artifacts → world-guide-data** 下载。
-4. 检查 `reports/YYYY-MM-DD.md` 和 CSV 候选榜，以及 `history/YYYY-MM-DD.json`：`demo` 应为 `false`，`regions` 含配置的六个地区，视频 ID 不重复。空榜时检查关键词。
-
-此后每天北京时间 **08:17** 自动运行（GitHub 调度可能延迟）。运行失败请查看失败步骤：缺 Secret、403、配额或地区支持错误都会明确失败。PR 中的 Offline tests 无需 Secret。
-
-### 本地验证
+Python 3.12+，采集与测试只需标准库；Release 存储需要 GitHub runner 自带的 `gh`。
 
 ```sh
 python -m unittest discover -s tests -v
 python collector.py --demo --output work/demo
+# 通过环境变量安全注入 YOUTUBE_API_KEY 后：
+python collector.py
 ```
 
-模拟结果仅验证流程。正式运行从环境变量读取 `YOUTUBE_API_KEY`，执行 `python collector.py`。
+`data/reports/YYYY-MM-DD-review.md` 和同名 CSV 是每日审核交付。字段包括原题、频道、链接、发布时间、中文拟题、题材、发现市场、编辑评分与明细、累计播放量、有效快照差值和间隔、审核状态。旧格式 `YYYY-MM-DD.md/csv` 保留作采集池查看，**每日候选请使用带 `-review` 的文件**。`data/history` 保存完整发现池，避免仅对入选十条留存基线。
 
-### 历史和指标
+中文拟题为基于匹配词的保守提问模板，**不是原题翻译或内容摘要**。编辑必须观看原视频、核对来源、重拟标题并确认版权；没有证据时不推断视频讲解了什么。
 
-同一天重跑更新当天快照，跨天独立保存；同一视频可在不同日期重复出现，以便观察趋势。只保留最近 25 天轻量元数据，滚动历史通过 Actions artifact 延续，每份 artifact 保留 2 天。连续两天未成功运行可能失去历史；数据不提交 Git。各地区任一请求失败则不生成当日榜。
+## 发现、评分与多样性
 
-这是热门榜候选采集，不是旅游视频搜索；地区表示榜单市场，累计播放量不等于当日增长。旅行相关性需人工审核，也可用关键词筛选。API 行为依据 [YouTube videos.list 官方文档](https://developers.google.com/youtube/data/reference/rest/v3/videos/list)。
+按 UTC+8 日期确定性轮换自然科学、地理生态、历史文化、工程技术四组搜索词；每个市场一次 `search.list`（最近30天、strict safeSearch），再一次 `videos.list` 核验公开状态和统计。默认6市场，最多12市场，每次最多50结果；搜索不翻页。重复视频合并市场；include/exclude keywords 仍生效。V1 `pages_per_region`、`top_n` 仅用于旧热门榜函数和演示兼容，不控制 V2 搜索。
 
-完整配置、故障排查、配额与保留策略见 [使用指南](docs/MVP_GUIDE.md) 和 [配额及数据说明](docs/QUOTA_COMPLIANCE.md)。
+只将元数据中实际匹配题材词的视频放入审核池；搜索词本身不视为题材证据。英语搜索对其他语言召回有限，词典匹配不能代替观看，地区也不代表视频来源国。编辑评分为关键词匹配60分 + 最近30天线性新鲜度0–30分 + 匹配题材数量×2（最多10分），不使用播放量构造质量或热度评分。按分数和视频ID确定性排序；每题材最多3条，每分配市场最多3条，多市场视频分配给当前数量最少的实际发现市场。不足10条时明确报告实际数量，不虚构、不静默放宽限制。
+
+## 历史与指标口径
+
+累计播放量永远标为累计。仅在同一ID有18–30小时内、UTC跨日、非模拟、时间有效、发布时间不晚于旧快照、计数均非负且未回退时计算差值，同时输出真实小时间隔。它不是精确24小时热度。不补零，不将缺测推算成增量，不拿发布时间后的首个快照之前的累计量充当跨日差值。陈旧、损坏、同日、模拟和未来快照不作为基线。所有日期时间必须包含时区。
+
+## 持久化与权限
+
+每日 workflow 仅在 main 执行，PR 离线CI不接触 Secret。采集 job 单独授予 `contents: write`，checkout 不保留 Git 凭据。通过专用 Release `world-guide-data-v2` 保存压缩滚动历史；每天先恢复，再采集，再上传新资产、核对资产名和大小，最后删除旧资产。**不提交每日数据到 Git，也不强推 main**。Archive 上限20MB，解压上限50MB，路径白名单；失败会停止并保留错误状态。并发组保证不会同时覆盖；上传失败保留旧资产，删除失败会使任务失败并在下次运行重试。
+
+Release 持久化不受两天 Artifact 到期影响。默认原始 API 元数据和含元数据报告保留25天，而非无限期存储；清理在采集前、持久化前均执行，即使 API 采集失败也持久化清理后的历史。Artifact 仅为两天的便捷取件副本。首次 V2 不依赖 V1 Artifact，缺基线正常显示不可计算。仓库公开时 Release 也公开，只保存公开视频元数据及编辑报告，不放密钥或个人资料。
+
+长期可靠指持久存储机制持续运行，并不意味着永久保留原始 API 数据。YouTube 对 API 数据的保存、刷新和删除有要求，见[开发者政策](https://developers.google.com/youtube/terms/developer-policies)。25天窗口留有余量；如 Actions 被停用、存储权限失效或连续失败，自动清理不能得到保证，维护者须处理失败通知，在30天期限前删除过期 Release 资产及其他副本。手动归档、下载副本也需要自行清理。需要永久历史库时应先确定平台许可与适当存储方案，不把历史统计自动当成可无限保存的数据。
+
+## 配额、安全与手动验收
+
+每次默认最多6次搜索 + 6次视频详情，最多12市场时各12次；每请求最多尝试3次，429/5xx重试，403立即失败。不要把每天某个配额数值写死：按[当前 search.list 文档](https://developers.google.com/youtube/v3/docs/search/list)与项目控制台的配额桶/实际消耗验收，不通过多个项目绕过配额。查询参数不包含密钥，密钥只在请求头；错误不回显响应正文、密钥或凭据。使用受限的 GitHub Actions Secret `YOUTUBE_API_KEY`，不写入文件或日志。
+
+1. PR CI通过后审查 diff，并由维护者合并；本次交付不自动合并。
+2. Settings → Actions → General 检查仓库/组织允许 job 使用写权限，保留 `YOUTUBE_API_KEY` Secret，仅授予 YouTube Data API 所需权限。Release 创建还需允许创建 tag。数据tag只在首次创建时指向当时main，不移动代码分支。
+3. main 上手动运行 Daily World Guide。确认 Restore/Persist成功、Release有一个 snapshot ZIP、Artifact可下载。首日增量缺测是正常情况。等待次日再运行检查有效快照差值；同日重跑不制造日增量。
+4. 下载审核 Markdown/CSV，检查10条或明确不足说明、题材/分配市场各≤3、原链接/原题一致、中文拟题待核验标记，Excel公式注入已转义。
+5. 过两天确认 Artifact过期后仍能从Release恢复。无有效18–30小时间隔时不得生成增量。
+6. 可在隔离测试仓库撤销写权限或模拟上传失败，确认任务失败而不是宣布保存成功；恢复权限重跑。不要在生产数据上做破坏性验证。
+7. 检查25天外的 history 与 `-review` 报告被移除、旧Release资产被删除、Git提交数量不因每日采集增长。若停用自动化，先删除持久化资产与副本。
+
+离线测试覆盖基线、缺测、计数回退、发布时间、模拟/陈旧快照、发现请求预算、去重、多样性、恰好10条与不足、Markdown/CSV转义、报告清理、上传失败保留旧包和不安全ZIP。真实 API 与 Release 写入须在合并后的手动运行验收；离线测试不能证明这些外部权限可用。
